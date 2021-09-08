@@ -3,6 +3,7 @@
 
 #include <TFT.h>  
 #include <SPI.h>
+#include <SD.h>
 #include <Thermistor.h>
 #include <NTC_Thermistor.h>
 #include <Stepper.h>
@@ -27,15 +28,17 @@ struct Vector2D
 };
 
 bool g_IsGoodTemperature;
-float g_T1, g_T2, g_T3;
+float g_T1, g_T2, g_T3, g_P;
 double g_T1OnGoodTemperatureStartTimePoint;
 std::shared_ptr<Timer<>> g_Timer, g_LCDTextTimer;
 std::shared_ptr<TFT> g_TFTScreen;
 std::shared_ptr<Thermistor> g_Thermistor1, g_Thermistor2, g_Thermistor3;
 std::shared_ptr<Stepper> g_Stepper1, g_Stepper2;
 
-void SprawdzT1(), Krok2(), UpdateTemperature(), PrintTemperature();
+void SprawdzT1(), Krok2(), UpdateScreenValues(), PrintOnScreenFromString(String Text, Vector2D ScreenPosition);
 bool IsTemperatureEqual(float A, float B, float ErrorTolerance = 0.05f);
+int GetAvgAnalogRead(int Pin, int AnalogReadAmount = 16);
+float MapFloat(float x, float in_min, float in_max, float out_min, float out_max);
 
 void setup()
 { 
@@ -43,17 +46,18 @@ void setup()
 
   g_Timer = std::make_shared<Timer<>>();
   g_LCDTextTimer = std::make_shared<Timer<>>();
-  g_LCDTextTimer->every(3000, UpdateTemperature); 
+  g_LCDTextTimer->every(3000, UpdateScreenValues); 
 
   g_TFTScreen = std::make_shared<TFT>(12/*CS*/, 11/*RS*/, 10/*RST*/);
   g_TFTScreen->begin();
   g_TFTScreen->setRotation(3);
   g_TFTScreen->background(0, 0, 0);
   g_TFTScreen->stroke(255, 255, 255);
-  g_TFTScreen->setTextSize(2);
-  g_TFTScreen->text("T1:", 6, 6);
-  g_TFTScreen->text("T2:", 6, 36);
-  g_TFTScreen->text("T3:", 6, 66);
+  g_TFTScreen->setTextSize(1);
+  g_TFTScreen->text("T1:", 4, 4);
+  g_TFTScreen->text("T2:", 4, 14);
+  g_TFTScreen->text("T3:", 4, 24);
+  g_TFTScreen->text("P:", 4, 44);
 
   g_Thermistor1 = std::make_shared<NTC_Thermistor>(A0/*SENSOR_PIN*/, 9810/*REFERENCE_RESISTANCE*/, 10000/*NOMINAL_RESISTANCE*/, 25/*NOMINAL_TEMPERATURE*/, 3950/*B_VALUE*/);
   g_Thermistor2 = std::make_shared<NTC_Thermistor>(A1/*SENSOR_PIN*/, 9810/*REFERENCE_RESISTANCE*/, 10000/*NOMINAL_RESISTANCE*/, 25/*NOMINAL_TEMPERATURE*/, 3950/*B_VALUE*/);
@@ -63,8 +67,10 @@ void setup()
   g_T2 = g_Thermistor1->readCelsius();
   g_T3 = g_Thermistor1->readCelsius();
 
+  g_P = 0.f;
+
   g_Stepper1 = std::make_shared<Stepper>(200/*STEPS*/, 2/*PIN1*/, 3/*PIN2*/, 4/*PIN3*/, 5/*PIN4*/);
-  
+  g_Stepper1->setSpeed(20);
   //SprawdzT1();
 }
 
@@ -124,13 +130,14 @@ void Krok2()
   }
 }
 
-void UpdateTemperature()
+void UpdateScreenValues()
 {
   g_TFTScreen->stroke(0, 0, 0);
   
-  PrintTemperature(String(g_T1), Vector2D(50, 6));
-  PrintTemperature(String(g_T2), Vector2D(50, 36));
-  PrintTemperature(String(g_T3), Vector2D(50, 66));
+  PrintOnScreenFromString(String(g_T1), Vector2D(24, 4));
+  PrintOnScreenFromString(String(g_T2), Vector2D(24, 14));
+  PrintOnScreenFromString(String(g_T3), Vector2D(24, 24));
+  PrintOnScreenFromString(String(g_P), Vector2D(24, 44));
   
   g_TFTScreen->stroke(255, 255, 255);
   
@@ -138,24 +145,42 @@ void UpdateTemperature()
   g_T2 = g_Thermistor2->readCelsius();
   g_T3 = g_Thermistor3->readCelsius();
   
-  PrintTemperature(String(g_T1), Vector2D(50, 6));
-  PrintTemperature(String(g_T2), Vector2D(50, 36));
-  PrintTemperature(String(g_T3), Vector2D(50, 66));
+  g_P = MapFloat((5.0f * GetAvgAnalogRead(A3) / 1023), 0.5f, 4.5f, 0.0f, 2.06f);
+  
+  PrintOnScreenFromString(String(g_T1), Vector2D(24, 4));
+  PrintOnScreenFromString(String(g_T2), Vector2D(24, 14));
+  PrintOnScreenFromString(String(g_T3), Vector2D(24, 24));
+  PrintOnScreenFromString(String(g_P), Vector2D(24, 44));
 }
 
-void PrintTemperature(String TemperatureText, Vector2D ScreenPosition)
+void PrintOnScreenFromString(String Text, Vector2D ScreenPosition)
 {
-  char *TemperatureText_char_array = new char[TemperatureText.length()];
+  char *Text_char_array = new char[Text.length()];
 
-  TemperatureText.toCharArray(TemperatureText_char_array, TemperatureText.length() + 1);
+  Text.toCharArray(Text_char_array, Text.length() + 1);
 
-  g_TFTScreen->text(TemperatureText_char_array, ScreenPosition.X, ScreenPosition.Y);
+  g_TFTScreen->text(Text_char_array, ScreenPosition.X, ScreenPosition.Y);
 
-  delete [] TemperatureText_char_array;
-  TemperatureText_char_array = NULL;
+  delete [] Text_char_array;
+  Text_char_array = NULL;
 }
 
 bool IsTemperatureEqual(float A, float B, float ErrorTolerance = 0.05f)
 {
   return fabs(A - B) < ErrorTolerance;
+}
+
+float MapFloat(float x, float in_min, float in_max, float out_min, float out_max)
+{
+  return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+
+int GetAvgAnalogRead(int Pin, int AnalogReadAmount = 16)
+{
+  int Raw = 0;
+  for (int i = 0; i < AnalogReadAmount; i++)
+  {
+    Raw += analogRead(Pin);
+  }
+  return Raw / AnalogReadAmount;
 }
