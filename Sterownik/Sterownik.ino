@@ -3,17 +3,17 @@
 
 #include <TFT.h>  
 #include <SPI.h>
-#include <SD.h>
 #include <Thermistor.h>
 #include <NTC_Thermistor.h>
 #include <Stepper.h>
 
-#define GOOD_TEMPERATURE 78.1f
-#define TOO_HIGH_TEMPERATURE 80.f
+#define GOOD_T1_TEMPERATURE 30.1f//78.1f
+#define GOOD_T3_TEMPERATURE 30.1f//78.1f
+#define TOO_HIGH_T1_TEMPERATURE 80.f
 
 #define ONE_MINUTE 60000
-#define THREE_MINUTES 180000
-#define FIVE_MINUTES 300000
+#define THREE_MINUTES 5000//180000
+#define FIVE_MINUTES 10000//300000
 
 struct Vector2D
 {
@@ -30,13 +30,13 @@ struct Vector2D
 bool g_IsGoodTemperature;
 float g_T1, g_T2, g_T3, g_P;
 double g_T1OnGoodTemperatureStartTimePoint;
-std::shared_ptr<Timer<>> g_Timer, g_LCDTextTimer;
+std::shared_ptr<Timer<>> g_T1Timer, g_T3Timer, g_LCDTextTimer;
 std::shared_ptr<TFT> g_TFTScreen;
 std::shared_ptr<Thermistor> g_Thermistor1, g_Thermistor2, g_Thermistor3;
 std::shared_ptr<Stepper> g_Stepper1, g_Stepper2;
 
-void SprawdzT1(), Krok2(), UpdateScreenValues(), PrintOnScreenFromString(String Text, Vector2D ScreenPosition);
-bool IsTemperatureEqual(float A, float B, float ErrorTolerance = 0.05f);
+void T1Control1(), T1Control2(), T1Control3(), T1Control3(), UpdateScreenValues(), PrintOnScreenFromString(String Text, Vector2D ScreenPosition);
+bool IsEqual(float A, float B, float ErrorTolerance = 0.05f);
 int GetAvgAnalogRead(int Pin, int AnalogReadAmount = 16);
 float MapFloat(float x, float in_min, float in_max, float out_min, float out_max);
 
@@ -44,7 +44,11 @@ void setup()
 { 
   g_IsGoodTemperature = false;
 
-  g_Timer = std::make_shared<Timer<>>();
+  g_T1Timer = std::make_shared<Timer<>>();
+
+  g_T3Timer = std::make_shared<Timer<>>();
+  g_T3Timer->every(ONE_MINUTE, T1Control3);
+
   g_LCDTextTimer = std::make_shared<Timer<>>();
   g_LCDTextTimer->every(3000, UpdateScreenValues); 
 
@@ -71,19 +75,23 @@ void setup()
 
   g_Stepper1 = std::make_shared<Stepper>(200/*STEPS*/, 2/*PIN1*/, 3/*PIN2*/, 4/*PIN3*/, 5/*PIN4*/);
   g_Stepper1->setSpeed(20);
-  //SprawdzT1();
+ 
+  T1Control1();
 }
 
 void loop()
 {
-  g_Timer->tick();
+  g_T1Timer->tick();
+  g_T3Timer->tick();
   g_LCDTextTimer->tick();
 }
 
-void SprawdzT1()
+void T1Control1()
 {
-  if(IsTemperatureEqual(g_T1, GOOD_TEMPERATURE))
+  g_TFTScreen->background(0, 0, 0);
+  if(IsEqual(g_T1, GOOD_T1_TEMPERATURE, 1.f))
   {
+    PrintOnScreenFromString("0", Vector2D(4, 64));
     if(!g_IsGoodTemperature)
     {
       g_T1OnGoodTemperatureStartTimePoint = millis();
@@ -93,40 +101,92 @@ void SprawdzT1()
     {
       if(millis() - g_T1OnGoodTemperatureStartTimePoint > FIVE_MINUTES)
       {
-        Krok2();
+        T1Control2();
+        return;
       }
     }
+    g_T1Timer->in(THREE_MINUTES, T1Control1);
+
     return;
   }
-  else if(g_T1 < GOOD_TEMPERATURE)
+  else if(g_T1 < GOOD_T1_TEMPERATURE)
   {
-    //zwieksz P1 o 5%
-    g_Timer->in(THREE_MINUTES, SprawdzT1);
+    g_Stepper1->step(5);
+    g_T1Timer->in(THREE_MINUTES, T1Control1);
+    PrintOnScreenFromString("5", Vector2D(4, 64));
   }
-  else if(g_T1 > TOO_HIGH_TEMPERATURE)
+  else if(g_T1 > TOO_HIGH_T1_TEMPERATURE)
   {
-    //zmniejsz P1 o 10%
-    g_Timer->in(THREE_MINUTES, SprawdzT1);
+    g_Stepper1->step(-10);
+    g_T1Timer->in(THREE_MINUTES, T1Control1);
+    PrintOnScreenFromString("-10", Vector2D(4, 64));
   }
-  else if(g_T1 > GOOD_TEMPERATURE)
+  else if(g_T1 > GOOD_T1_TEMPERATURE)
   {
-    //zmniejsz P1 o 5%
-    g_Timer->in(THREE_MINUTES, SprawdzT1);
+    g_Stepper1->step(5);
+    g_T1Timer->in(THREE_MINUTES, T1Control1);
+    PrintOnScreenFromString("-5", Vector2D(4, 64));
   }
 
-  g_IsGoodTemperature = false;
+  if(g_IsGoodTemperature)
+  {
+    g_IsGoodTemperature = false;
+  }
 }
 
-void Krok2()
+void T1Control2()
 {
-  //zwieksz P1 o 5%
-  if(IsTemperatureEqual(g_T1, GOOD_TEMPERATURE))
+  g_TFTScreen->background(0,0,0);
+  PrintOnScreenFromString("KROK2", Vector2D(4, 94));
+  if(IsEqual(g_T1, GOOD_T1_TEMPERATURE, 1.f) || g_T1 < GOOD_T1_TEMPERATURE)
   {
-    g_Timer->in(THREE_MINUTES, Krok2);
+    g_Stepper1->step(5);
+    g_T1Timer->in(THREE_MINUTES, T1Control2);
+    PrintOnScreenFromString("5", Vector2D(4, 64));
   }
-  else if(g_T1 > GOOD_TEMPERATURE)
+  else if(g_T1 > GOOD_T1_TEMPERATURE)
   {
-    //zmniejsz P1 o 5%
+    g_Stepper1->step(-5);
+    PrintOnScreenFromString("-5", Vector2D(4, 64));
+    T1Control3();
+  }
+}
+
+void T1Control3()
+{
+  g_TFTScreen->background(0,0,0);
+  PrintOnScreenFromString("KROK3", Vector2D(4, 94));
+  if(IsEqual(g_T1, GOOD_T1_TEMPERATURE))
+  {
+    g_T1Timer->in(ONE_MINUTE, T1Control3);
+  }
+  else if(g_T1 < GOOD_T1_TEMPERATURE)
+  {
+    g_Stepper1->step(5);
+    g_T1Timer->in(ONE_MINUTE, T1Control3);
+    PrintOnScreenFromString("5", Vector2D(4, 64));
+  }
+  else if(g_T1 > GOOD_T1_TEMPERATURE)
+  {
+    g_Stepper1->step(-5);
+    g_T1Timer->in(ONE_MINUTE, T1Control3);
+    PrintOnScreenFromString("-5", Vector2D(4, 64));
+  }
+}
+
+void WaterControl()
+{
+  if(IsEqual(g_T3, GOOD_T3_TEMPERATURE), 2.f)
+  {
+
+  }
+  else if(g_T3 < GOOD_T3_TEMPERATURE)
+  {
+    //odkrec 5steps
+  }
+  else if(g_T3 > GOOD_T3_TEMPERATURE)
+  {
+    //zakrec 5steps
   }
 }
 
@@ -165,7 +225,7 @@ void PrintOnScreenFromString(String Text, Vector2D ScreenPosition)
   Text_char_array = NULL;
 }
 
-bool IsTemperatureEqual(float A, float B, float ErrorTolerance = 0.05f)
+bool IsEqual(float A, float B, float ErrorTolerance = 0.05f)
 {
   return fabs(A - B) < ErrorTolerance;
 }
