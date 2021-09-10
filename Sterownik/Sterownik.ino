@@ -7,8 +7,8 @@
 #include <NTC_Thermistor.h>
 #include <Stepper.h>
 
-#define P_STEPPER_STEPS 2
-#define WATER_STEPPER_STEPS 5
+#define P_STEPPER_STEPS 6 //real steps = 2 (after stepper release)
+#define WATER_STEPPER_STEPS 9 //real steps = 5 (after stepper release)
 
 #define SCREEN_COLUMN_1 4
 #define SCREEN_COLUMN_2 80
@@ -27,17 +27,17 @@
 #define SCREEN_P_X 24
 #define SCREEN_STEP_X 32
 
-#define GOOD_T1_TEMPERATURE 30.1f //78.1f
-#define GOOD_T3_TEMPERATURE 30.1f //78.1f
+#define GOOD_T1_TEMPERATURE 78.1f
+#define GOOD_T3_TEMPERATURE 78.1f
 #define TOO_HIGH_T1_TEMPERATURE 80.f
-#define WATER_CONTROL_ACTIVATION_TEMPERATURE 30.f //50.f
+#define WATER_CONTROL_ACTIVATION_TEMPERATURE 50.f
 
-#define ONE_MINUTE 5000 //60000
-#define THREE_MINUTES 5000 //180000
-#define FIVE_MINUTES 10000 //300000
+#define ONE_MINUTE 60000
+#define THREE_MINUTES 180000
+#define FIVE_MINUTES 300000
 
 bool g_IsGoodTemperature, g_IsWaterControlActived;
-int g_CurrentStep;
+int g_CurrentStep, g_Stepper1Pins[4] = {2, 3, 4, 5}, g_Stepper2Pins[4] = {6, 7, 8, 9};
 float g_T1, g_T2, g_T3, g_P;
 unsigned long g_T1OnGoodTemperatureStartTimePoint;
 String g_CurrentActionInStepText, g_CurrentActionWaterControlText;
@@ -46,7 +46,7 @@ std::shared_ptr<TFT> g_TFTScreen;
 std::shared_ptr<Thermistor> g_Thermistor1, g_Thermistor2, g_Thermistor3;
 std::shared_ptr<Stepper> g_Stepper1, g_Stepper2;
 
-void T1Control1(), T1Control2(), T1Control3(), WaterControl(), UpdateScreenValues(), ClearCurrentActionInStepTextOnScreen(), PrintOnScreenFromString(String Text, int X, int Y);
+void T1Control1(), T1Control2(), T1Control3(), WaterControl(), Release4PinsStepper(int pins[]), UpdateScreenValues(), ClearCurrentActionInStepTextOnScreen(), PrintOnScreenFromString(String Text, int X, int Y);
 bool IsEqual(float A, float B, float ErrorTolerance = 0.05f);
 int GetAvgAnalogRead(int Pin, int AnalogReadAmount = 16);
 float MapFloat(float x, float in_min, float in_max, float out_min, float out_max);
@@ -94,10 +94,10 @@ void setup()
 
   g_P = 0.f;
 
-  g_Stepper1 = std::make_shared<Stepper>(200 /*STEPS*/, 2 /*PIN1*/, 3 /*PIN2*/, 4 /*PIN3*/, 5 /*PIN4*/);
+  g_Stepper1 = std::make_shared<Stepper>(200 /*STEPS*/, g_Stepper1Pins[0] /*PIN1*/, g_Stepper1Pins[1] /*PIN2*/, g_Stepper1Pins[2] /*PIN3*/, g_Stepper1Pins[3] /*PIN4*/);
   g_Stepper1->setSpeed(20);
 
-  g_Stepper2 = std::make_shared<Stepper>(200 /*STEPS*/, 6 /*PIN1*/, 7 /*PIN2*/, 8 /*PIN3*/, 9 /*PIN4*/);
+  g_Stepper2 = std::make_shared<Stepper>(200 /*STEPS*/, g_Stepper2Pins[0] /*PIN1*/, g_Stepper2Pins[1] /*PIN2*/, g_Stepper2Pins[2] /*PIN3*/, g_Stepper2Pins[3] /*PIN4*/);
   g_Stepper2->setSpeed(20);
 
   T1Control1();
@@ -119,7 +119,7 @@ void T1Control1()
     g_TFTScreen->text("1", SCREEN_STEP_X, SCREEN_ROW_6);
   }
 
-  if (IsEqual(g_T1, GOOD_T1_TEMPERATURE, 1.f))
+  if (IsEqual(g_T1, GOOD_T1_TEMPERATURE))
   {
     if (!g_IsGoodTemperature)
     {
@@ -145,6 +145,7 @@ void T1Control1()
   else if (g_T1 < GOOD_T1_TEMPERATURE)
   {
     g_Stepper1->step(-P_STEPPER_STEPS);
+    Release4PinsStepper(g_Stepper1Pins);
 
     g_CurrentActionInStepText = "Warming";
     PrintOnScreenFromString(g_CurrentActionInStepText, SCREEN_COLUMN_1, SCREEN_ROW_7);
@@ -152,6 +153,7 @@ void T1Control1()
   else if (g_T1 > TOO_HIGH_T1_TEMPERATURE)
   {
     g_Stepper1->step(P_STEPPER_STEPS * 2);
+    Release4PinsStepper(g_Stepper1Pins);
 
     g_CurrentActionInStepText = "Cooling";
     PrintOnScreenFromString(g_CurrentActionInStepText, SCREEN_COLUMN_1, SCREEN_ROW_7);
@@ -159,6 +161,7 @@ void T1Control1()
   else if (g_T1 > GOOD_T1_TEMPERATURE)
   {
     g_Stepper1->step(P_STEPPER_STEPS);
+    Release4PinsStepper(g_Stepper1Pins);
 
     g_CurrentActionInStepText = "Cooling";
     PrintOnScreenFromString(g_CurrentActionInStepText, SCREEN_COLUMN_1, SCREEN_ROW_7);
@@ -186,9 +189,10 @@ void T1Control2()
     g_TFTScreen->text("2", SCREEN_STEP_X, SCREEN_ROW_6);
   }
 
-  if (IsEqual(g_T1, GOOD_T1_TEMPERATURE, 1.f) || g_T1 < GOOD_T1_TEMPERATURE)//-------
+  if (IsEqual(g_T1, GOOD_T1_TEMPERATURE) || g_T1 < GOOD_T1_TEMPERATURE)
   {
     g_Stepper1->step(-P_STEPPER_STEPS);
+    Release4PinsStepper(g_Stepper1Pins);
 
     g_CurrentActionInStepText = "Warming";
     PrintOnScreenFromString(g_CurrentActionInStepText, SCREEN_COLUMN_1, SCREEN_ROW_7);
@@ -198,6 +202,7 @@ void T1Control2()
   else if (g_T1 > GOOD_T1_TEMPERATURE)
   {
     g_Stepper1->step(P_STEPPER_STEPS);
+    Release4PinsStepper(g_Stepper1Pins);
 
     T1Control3();
     g_T1Timer->every(ONE_MINUTE, T1Control3);
@@ -218,7 +223,7 @@ void T1Control3()
     g_TFTScreen->text("3", SCREEN_STEP_X, SCREEN_ROW_6);
   }
 
-  if (IsEqual(g_T1, GOOD_T1_TEMPERATURE, 1.f))//-------
+  if (IsEqual(g_T1, GOOD_T1_TEMPERATURE))
   {
     g_CurrentActionInStepText = "Holding";
     PrintOnScreenFromString(g_CurrentActionInStepText, SCREEN_COLUMN_1, SCREEN_ROW_7);
@@ -226,6 +231,7 @@ void T1Control3()
   else if (g_T1 < GOOD_T1_TEMPERATURE)
   {
     g_Stepper1->step(-P_STEPPER_STEPS);
+    Release4PinsStepper(g_Stepper1Pins);
 
     g_CurrentActionInStepText = "Warming";
     PrintOnScreenFromString(g_CurrentActionInStepText, SCREEN_COLUMN_1, SCREEN_ROW_7);
@@ -233,6 +239,7 @@ void T1Control3()
   else if (g_T1 > GOOD_T1_TEMPERATURE)
   {
     g_Stepper1->step(P_STEPPER_STEPS);
+    Release4PinsStepper(g_Stepper1Pins);
 
     g_CurrentActionInStepText = "Cooling";
     PrintOnScreenFromString(g_CurrentActionInStepText, SCREEN_COLUMN_1, SCREEN_ROW_7);
@@ -241,9 +248,9 @@ void T1Control3()
 
 void WaterControl()
 {
-  if(g_T1 > WATER_CONTROL_ACTIVATION_TEMPERATURE)
+  if (g_T1 > WATER_CONTROL_ACTIVATION_TEMPERATURE)
   {
-    if(!g_IsWaterControlActived)
+    if (!g_IsWaterControlActived)
     {
       g_IsWaterControlActived = true;
 
@@ -265,6 +272,7 @@ void WaterControl()
     else if (g_T3 < GOOD_T3_TEMPERATURE)
     {
       g_Stepper2->step(WATER_STEPPER_STEPS);
+      Release4PinsStepper(g_Stepper2Pins);
 
       g_CurrentActionWaterControlText = "Warming";
       PrintOnScreenFromString(g_CurrentActionWaterControlText, SCREEN_COLUMN_2, SCREEN_ROW_7);
@@ -272,12 +280,13 @@ void WaterControl()
     else if (g_T3 > GOOD_T3_TEMPERATURE)
     {
       g_Stepper2->step(-WATER_STEPPER_STEPS);
+      Release4PinsStepper(g_Stepper2Pins);
 
       g_CurrentActionWaterControlText = "Cooling";
       PrintOnScreenFromString(g_CurrentActionWaterControlText, SCREEN_COLUMN_2, SCREEN_ROW_7);
     }
   }
-  else if(g_IsWaterControlActived)
+  else if (g_IsWaterControlActived)
   {
     g_IsWaterControlActived = false;
 
@@ -286,6 +295,17 @@ void WaterControl()
     PrintOnScreenFromString(g_CurrentActionWaterControlText, SCREEN_COLUMN_2, SCREEN_ROW_7);
     g_TFTScreen->stroke(255, 255, 255);
     PrintOnScreenFromString("Not active", SCREEN_COLUMN_2, SCREEN_ROW_6);
+  }
+}
+
+void Release4PinsStepper(int pins[])
+{
+  for(int i = 0; i < 4; i++)
+  {
+    if(digitalRead(pins[i]))
+    {
+      digitalWrite(pins[i], LOW);
+    }
   }
 }
 
